@@ -56,36 +56,70 @@ header h1 {
   min-width: 180px;
 }
 
-.controls .file-upload {
-  border: 1px dashed #94a3b8;
-  border-radius: 8px;
-  padding: 0.5rem 0.75rem;
-  background: #f8fafc;
-  color: #0e1116;
-  font-weight: 500;
-  cursor: pointer;
-  position: relative;
-  overflow: hidden;
-}
-
-.controls .file-upload input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.file-name {
-  font-size: 0.85rem;
-  color: #475569;
-  max-width: 200px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
 .controls input[type='range'] {
   accent-color: #1f7cff;
+  width: 220px;
+  appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  background: #dbe0ed;
+  transition: background 0.2s ease;
+}
+
+.controls input[type='range']::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: #cdd3e5;
+}
+
+.controls input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #1f7cff;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 6px rgba(31, 124, 255, 0.35);
+  margin-top: -6px;
+}
+
+.controls input[type='range']::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: #cdd3e5;
+}
+
+.controls input[type='range']::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: #1f7cff;
+  box-shadow: 0 2px 6px rgba(31, 124, 255, 0.35);
+}
+
+.controls input[type='range']:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(31, 124, 255, 0.35);
+}
+
+@media (max-width: 640px) {
+  .controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .controls > * {
+    width: 100%;
+  }
+
+  .controls button {
+    width: 100%;
+  }
+
+  .controls input[type='range'] {
+    width: 100%;
+  }
 }
 
 .error {
@@ -144,6 +178,11 @@ header h1 {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: #64748b;
+}
+
+.stats .value {
+  font-weight: 600;
+  color: #0f172a;
 }
 
 .stats .bit {
@@ -208,16 +247,6 @@ header h1 {
   .notes {
     background: rgba(255, 255, 255, 0.04);
     border-color: rgba(255, 255, 255, 0.12);
-  }
-
-  .controls .file-upload {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(148, 163, 184, 0.5);
-    color: #f3f4f6;
-  }
-
-  .file-name {
-    color: #cbd5f5;
   }
 
   .bits code {

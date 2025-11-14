@@ -6,16 +6,13 @@ const MAX_BIT_BUFFER = 128
 function App() {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
-  const animationRef = useRef(null)
+  const frameRequestRef = useRef(null)
   const sampleTimerRef = useRef(null)
   const isRunningRef = useRef(false)
-  const objectUrlRef = useRef('')
   const brightnessRef = useRef(0)
   const thresholdRef = useRef(140)
 
   const [isRunning, setIsRunning] = useState(false)
-  const [sourceType, setSourceType] = useState('idle')
-  const [fileName, setFileName] = useState('')
   const [error, setError] = useState('')
   const [brightness, setBrightness] = useState(0)
   const [bits, setBits] = useState('')
@@ -44,20 +41,6 @@ function App() {
     return () => stopCapture()
   }, [])
 
-  const cleanupObjectUrl = () => {
-    if (objectUrlRef.current) {
-      URL.revokeObjectURL(objectUrlRef.current)
-      objectUrlRef.current = ''
-    }
-  }
-
-  const beginAnalysis = () => {
-    isRunningRef.current = true
-    setIsRunning(true)
-    tickAnalysis()
-    startSampler()
-  }
-
   const waitForMetadata = (video) =>
     new Promise((resolve) => {
       if (!video) {
@@ -74,6 +57,23 @@ function App() {
       }
       video.addEventListener('loadedmetadata', handler)
     })
+
+  const cancelFrameLoop = () => {
+    const video = videoRef.current
+    if (typeof video?.cancelVideoFrameCallback === 'function') {
+      video.cancelVideoFrameCallback(frameRequestRef.current ?? 0)
+    }
+    cancelAnimationFrame(frameRequestRef.current ?? 0)
+    frameRequestRef.current = null
+  }
+
+  const beginAnalysis = () => {
+    isRunningRef.current = true
+    setIsRunning(true)
+    processFrame()
+    scheduleFrameLoop()
+    startSampler()
+  }
 
   const startCapture = async () => {
     setError('')
@@ -101,11 +101,15 @@ function App() {
       }
       video.srcObject = stream
       await video.play()
+      await waitForMetadata(video)
 
       const [track] = stream.getVideoTracks()
-      setCameraInfo(track?.getSettings() ?? null)
-      setSourceType('camera')
-      setFileName('')
+      const settings = track?.getSettings ? track.getSettings() : null
+      setCameraInfo({
+        width: settings?.width ?? (video.videoWidth || null),
+        height: settings?.height ?? (video.videoHeight || null),
+        frameRate: settings?.frameRate ?? null,
+      })
       beginAnalysis()
     } catch (err) {
       console.error(err)
@@ -116,10 +120,8 @@ function App() {
   const stopCapture = async () => {
     isRunningRef.current = false
     setIsRunning(false)
-    setSourceType('idle')
-    cancelAnimationFrame(animationRef.current ?? 0)
+    cancelFrameLoop()
     clearInterval(sampleTimerRef.current ?? 0)
-    cleanupObjectUrl()
     const video = videoRef.current
     if (video?.srcObject) {
       const tracks = video.srcObject.getTracks?.() ?? []
@@ -131,52 +133,9 @@ function App() {
       video.src = ''
       video.load?.()
     }
-    setFileName('')
   }
 
-  const loadVideoFile = async (file) => {
-    if (!file) {
-      return
-    }
-    setError('')
-    await stopCapture()
-
-    const video = videoRef.current
-    if (!video) {
-      return
-    }
-
-    cleanupObjectUrl()
-    const url = URL.createObjectURL(file)
-    objectUrlRef.current = url
-
-    video.srcObject = null
-    video.src = url
-    video.loop = true
-    video.muted = true
-
-    try {
-      await waitForMetadata(video)
-      await video.play()
-    } catch (err) {
-      console.error(err)
-      setError(
-        err instanceof Error ? err.message : 'Unable to play the selected file',
-      )
-      return
-    }
-
-    setCameraInfo({
-      width: video.videoWidth || null,
-      height: video.videoHeight || null,
-      frameRate: null,
-    })
-    setFileName(file.name)
-    setSourceType('file')
-    beginAnalysis()
-  }
-
-  const tickAnalysis = () => {
+  const processFrame = () => {
     if (!isRunningRef.current) {
       return
     }
@@ -188,13 +147,11 @@ function App() {
     }
 
     if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
-      animationRef.current = requestAnimationFrame(tickAnalysis)
       return
     }
 
     const ctx = canvas.getContext('2d', { willReadFrequently: true })
     if (!ctx) {
-      animationRef.current = requestAnimationFrame(tickAnalysis)
       return
     }
 
@@ -228,8 +185,28 @@ function App() {
     ctx.strokeStyle = '#00ff80'
     ctx.lineWidth = 1
     ctx.strokeRect(startX, startY, roiSize, roiSize)
+  }
 
-    animationRef.current = requestAnimationFrame(tickAnalysis)
+  const scheduleFrameLoop = () => {
+    if (!isRunningRef.current) {
+      return
+    }
+    const video = videoRef.current
+    if (!video) {
+      return
+    }
+
+    if (typeof video.requestVideoFrameCallback === 'function') {
+      frameRequestRef.current = video.requestVideoFrameCallback(() => {
+        processFrame()
+        scheduleFrameLoop()
+      })
+    } else {
+      frameRequestRef.current = requestAnimationFrame(() => {
+        processFrame()
+        scheduleFrameLoop()
+      })
+    }
   }
 
   const startSampler = () => {
@@ -255,23 +232,16 @@ function App() {
   }, [sampleMs, isRunning])
 
   const clearBits = () => setBits('')
+  const handleThresholdChange = (event) => {
+    setThreshold(event.target.valueAsNumber ?? Number(event.target.value))
+  }
 
-  const handleFileUpload = async (event) => {
-    const file = event.target.files?.[0]
-    if (!file) {
-      return
-    }
-    await loadVideoFile(file)
-    event.target.value = ''
+  const handleSampleMsChange = (event) => {
+    setSampleMs(event.target.valueAsNumber ?? Number(event.target.value))
   }
 
   const activeBit = brightness >= threshold ? '1' : '0'
-  const sourceLabel =
-    sourceType === 'camera'
-      ? 'Live camera'
-      : sourceType === 'file'
-        ? 'Video upload'
-        : 'Idle'
+  const sourceLabel = isRunning ? 'Live camera' : 'Idle'
 
   return (
     <div className="app">
@@ -287,19 +257,6 @@ function App() {
         <button onClick={isRunning ? stopCapture : startCapture}>
           {isRunning ? 'Stop capture' : 'Start capture'}
         </button>
-        <label className="file-upload">
-          Analyze video file
-          <input
-            type="file"
-            accept="video/*"
-            onChange={handleFileUpload}
-          />
-        </label>
-        {fileName ? (
-          <span className="file-name" title={fileName}>
-            {fileName}
-          </span>
-        ) : null}
         <label>
           Threshold ({threshold})
           <input
@@ -307,7 +264,8 @@ function App() {
             min="0"
             max="255"
             value={threshold}
-            onChange={(event) => setThreshold(Number(event.target.value))}
+            onInput={handleThresholdChange}
+            onChange={handleThresholdChange}
           />
         </label>
         <label>
@@ -318,7 +276,8 @@ function App() {
             max="500"
             step="10"
             value={sampleMs}
-            onChange={(event) => setSampleMs(Number(event.target.value))}
+            onInput={handleSampleMsChange}
+            onChange={handleSampleMsChange}
           />
         </label>
         <button onClick={clearBits} disabled={!bits}>
@@ -330,52 +289,38 @@ function App() {
 
       <section className="display">
         <div className="video-panel">
-          <video
-            ref={videoRef}
-            playsInline
-            autoPlay
-            muted
-            controls={sourceType === 'file'}
-          />
+          <video ref={videoRef} playsInline autoPlay muted />
           <canvas ref={canvasRef} />
         </div>
         <div className="stats">
           <div>
             <span className="label">Facing preference</span>
-            <span>{facingPreference}</span>
+            <span className="value">{facingPreference}</span>
           </div>
           <div>
             <span className="label">Source</span>
-            <span>{sourceLabel}</span>
+            <span className="value">{sourceLabel}</span>
           </div>
           <div>
             <span className="label">Avg brightness</span>
-            <span>{brightness.toFixed(1)}</span>
+            <span className="value">{brightness.toFixed(1)}</span>
           </div>
           <div>
             <span className="label">Current bit</span>
             <span className={`bit bit-${activeBit}`}>{activeBit}</span>
           </div>
-          {cameraInfo ? (
-            <>
-              <div>
-                <span className="label">Reported resolution</span>
-                <span>
-                  {cameraInfo.width ?? '?'} × {cameraInfo.height ?? '?'}
-                </span>
-              </div>
-              <div>
-                <span className="label">Frame rate</span>
-                <span>{cameraInfo.frameRate ?? '?'} fps</span>
-              </div>
-            </>
-          ) : null}
-          {sourceType === 'file' && fileName ? (
-            <div>
-              <span className="label">File</span>
-              <span title={fileName}>{fileName}</span>
-            </div>
-          ) : null}
+          <div>
+            <span className="label">Reported resolution</span>
+            <span className="value">
+              {cameraInfo?.width ?? '—'} × {cameraInfo?.height ?? '—'}
+            </span>
+          </div>
+          <div>
+            <span className="label">Frame rate</span>
+            <span className="value">
+              {cameraInfo?.frameRate ? `${cameraInfo.frameRate} fps` : '—'}
+            </span>
+          </div>
         </div>
       </section>
 
@@ -396,11 +341,6 @@ function App() {
             iOS Safari currently caps WebRTC camera streams to ~1080p, and many
             Android browsers will downscale to match performance requirements,
             so true sensor resolution is rarely exposed.
-          </li>
-          <li>
-            You can also upload a recorded clip (ideal for repeatable tests) via
-            the control above; the analysis pipeline is the same, so you can
-            compare live vs recorded sessions frame by frame.
           </li>
           <li>
             For analysis we downscale frames to 320&nbsp;px wide on the canvas to
