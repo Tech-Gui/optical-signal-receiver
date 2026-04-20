@@ -257,8 +257,9 @@ function App() {
           }
           
           const idleTime = performance.now() - lastTransitionTimeRef.current
-          // Finalize message if ETX found, OR if transmission died/aborted for > 1.5 seconds
-          if (foundEtx || idleTime > 1500) {
+          const maxIdleTime = sampleMs * 12 // Scale timeout relative to speed (12 bits)
+          // Finalize message if ETX found, OR if transmission died/aborted
+          if (foundEtx || (idleTime > maxIdleTime && asciiStr.length > 0)) {
             if (asciiStr) {
               setMessages(m => [...m, asciiStr])
             }
