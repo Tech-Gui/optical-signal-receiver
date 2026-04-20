@@ -231,35 +231,50 @@ function App() {
         // Look for UART-framed STX and ETX to Decode directly
         let nextStr = accumulatedBitsRef.current
         const stxFrame = '100000010' // UART framed 0x02 (ignoring stop bit for jitter safety)
-        const etxFrame = '100000011' // UART framed 0x03 (ignoring stop bit for jitter safety)
         let stxIndex = nextStr.indexOf(stxFrame)
         let parsedAny = false
         
         while (stxIndex !== -1) {
-          let etxIndex = nextStr.indexOf(etxFrame, stxIndex + 9)
-          if (etxIndex !== -1) {
-            let asciiStr = ''
-            let i = stxIndex + 9
+          let asciiStr = ''
+          let i = stxIndex + 9
+          let foundEtx = false
+          let lastGoodIndex = i
+          
+          while(i <= nextStr.length - 10) {
+            // Re-align clock precisely to next Start bit
+            if (nextStr[i] !== '1') {
+              i++;
+              continue;
+            }
+            const charBits = nextStr.slice(i + 1, i + 9)
+            const charCode = parseInt(charBits, 2)
             
-            while(i <= etxIndex - 10) {
-              // Re-align clock precisely to next Start bit
-              if (nextStr[i] !== '1') {
-                i++;
-                continue;
-              }
-              const charBits = nextStr.slice(i + 1, i + 9)
-              asciiStr += String.fromCharCode(parseInt(charBits, 2))
-              i += 10 // Advance past UART block (1 start + 8 data + 1 stop)
+            if (charCode === 3) { // 0x03 is ETX
+              foundEtx = true
+              i += 10
+              break;
             }
             
+            // Accept printable ASCII
+            if (charCode >= 32 && charCode <= 126) {
+              asciiStr += String.fromCharCode(charCode)
+              lastGoodIndex = i + 10
+            }
+            i += 10 // Advance past UART block (1 start + 8 data + 1 stop)
+          }
+          
+          const idleTime = performance.now() - lastTransitionTimeRef.current
+          // Finalize message if ETX found, OR if transmission died/aborted for > 1.5 seconds
+          if (foundEtx || idleTime > 1500) {
             if (asciiStr) {
               setMessages(m => [...m, asciiStr])
             }
-            // Cut off parsed contents out of buffer
-            nextStr = nextStr.slice(etxIndex + 9)
+            // Cut off parsed contents out of buffer gracefully
+            nextStr = nextStr.slice(foundEtx ? i : nextStr.length)
             stxIndex = nextStr.indexOf(stxFrame)
             parsedAny = true
           } else {
+            // Give it more time to accumulate bits
             break
           }
         }
