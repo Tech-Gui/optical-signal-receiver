@@ -228,30 +228,36 @@ function App() {
             ? accumulatedBitsRef.current.slice(-MAX_BIT_BUFFER) 
             : accumulatedBitsRef.current)
             
-        // Look for STX and ETX to Decode directly from the string
+        // Look for UART-framed STX and ETX to Decode directly
         let nextStr = accumulatedBitsRef.current
-        const stx = '00000010'
-        const etx = '00000011'
-        let stxIndex = nextStr.indexOf(stx)
+        const stxFrame = '1000000100' // UART framed 0x02
+        const etxFrame = '1000000110' // UART framed 0x03
+        let stxIndex = nextStr.indexOf(stxFrame)
         let parsedAny = false
         
         while (stxIndex !== -1) {
-          let etxIndex = nextStr.indexOf(etx, stxIndex + 8)
+          let etxIndex = nextStr.indexOf(etxFrame, stxIndex + 10)
           if (etxIndex !== -1) {
-            const payload = nextStr.slice(stxIndex + 8, etxIndex)
             let asciiStr = ''
-            for (let i = 0; i < payload.length; i += 8) {
-              const byteStr = payload.slice(i, i + 8)
-              if (byteStr.length === 8) {
-                asciiStr += String.fromCharCode(parseInt(byteStr, 2))
+            let i = stxIndex + 10
+            
+            while(i <= etxIndex - 10) {
+              // Re-align clock precisely to next Start bit
+              if (nextStr[i] !== '1') {
+                i++;
+                continue;
               }
+              const charBits = nextStr.slice(i + 1, i + 9)
+              asciiStr += String.fromCharCode(parseInt(charBits, 2))
+              i += 10 // Advance past UART block (1 start + 8 data + 1 stop)
             }
+            
             if (asciiStr) {
               setMessages(m => [...m, asciiStr])
             }
             // Cut off parsed contents out of buffer
-            nextStr = nextStr.slice(etxIndex + 8)
-            stxIndex = nextStr.indexOf(stx)
+            nextStr = nextStr.slice(etxIndex + 10)
+            stxIndex = nextStr.indexOf(stxFrame)
             parsedAny = true
           } else {
             break
