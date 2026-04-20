@@ -7,10 +7,14 @@ function App() {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const frameRequestRef = useRef(null)
-  const sampleTimerRef = useRef(null)
   const isRunningRef = useRef(false)
   const brightnessRef = useRef(0)
   const thresholdRef = useRef(140)
+
+  // Edge decoding references
+  const lastStateRef = useRef(null)
+  const lastTransitionTimeRef = useRef(0)
+  const accumulatedBitsRef = useRef('')
 
   const [isRunning, setIsRunning] = useState(false)
   const [error, setError] = useState('')
@@ -126,7 +130,9 @@ function App() {
     isRunningRef.current = false
     setIsRunning(false)
     cancelFrameLoop()
-    clearInterval(sampleTimerRef.current ?? 0)
+    lastStateRef.current = null; // Reset decoder
+    lastTransitionTimeRef.current = 0;
+    accumulatedBitsRef.current = '';
     const video = videoRef.current
     if (video?.srcObject) {
       const tracks = video.srcObject.getTracks?.() ?? []
@@ -185,12 +191,85 @@ function App() {
     }
 
     const avg = pixels ? total / pixels : 0
-    setBrightness(Number(avg.toFixed(1)))
+    const currentBrightness = Number(avg.toFixed(1))
+    setBrightness(currentBrightness)
 
     if (recalibratingRef.current) {
-      if (avg < recalStatsRef.current.min) recalStatsRef.current.min = avg
-      if (avg > recalStatsRef.current.max) recalStatsRef.current.max = avg
+      if (currentBrightness < recalStatsRef.current.min) recalStatsRef.current.min = currentBrightness
+      if (currentBrightness > recalStatsRef.current.max) recalStatsRef.current.max = currentBrightness
     }
+
+    // --- Edge-based Run-Length Decoder ---
+    // Instead of randomly sampling with setInterval, we record the exact 
+    // duration between transitions (LOW->HIGH or HIGH->LOW) to calculate the bits emitted.
+    const now = performance.now()
+    if (!lastTransitionTimeRef.current) lastTransitionTimeRef.current = now
+    
+    // Determine the state for this frame based on the current threshold
+    const newState = currentBrightness >= thresholdRef.current ? '1' : '0'
+
+    if (lastStateRef.current !== null && newState !== lastStateRef.current) {
+      const duration = now - lastTransitionTimeRef.current
+      // Dividing duration by sampleMs gives us how many "beats" happened. Math.round corrects minor jitter.
+      const numBits = Math.round(duration / sampleMs) 
+      
+      let bitStr = ''
+      for (let i = 0; i < numBits; i++) bitStr += lastStateRef.current
+      
+      if (bitStr.length > 0) {
+        accumulatedBitsRef.current += bitStr
+        
+        // Cap max length to save memory natively
+        if (accumulatedBitsRef.current.length > MAX_BIT_BUFFER * 2) {
+           accumulatedBitsRef.current = accumulatedBitsRef.current.slice(-MAX_BIT_BUFFER * 2)
+        }
+        
+        setBits(accumulatedBitsRef.current.length > MAX_BIT_BUFFER 
+            ? accumulatedBitsRef.current.slice(-MAX_BIT_BUFFER) 
+            : accumulatedBitsRef.current)
+            
+        // Look for STX and ETX to Decode directly from the string
+        let nextStr = accumulatedBitsRef.current
+        const stx = '00000010'
+        const etx = '00000011'
+        let stxIndex = nextStr.indexOf(stx)
+        let parsedAny = false
+        
+        while (stxIndex !== -1) {
+          let etxIndex = nextStr.indexOf(etx, stxIndex + 8)
+          if (etxIndex !== -1) {
+            const payload = nextStr.slice(stxIndex + 8, etxIndex)
+            let asciiStr = ''
+            for (let i = 0; i < payload.length; i += 8) {
+              const byteStr = payload.slice(i, i + 8)
+              if (byteStr.length === 8) {
+                asciiStr += String.fromCharCode(parseInt(byteStr, 2))
+              }
+            }
+            if (asciiStr) {
+              setMessages(m => [...m, asciiStr])
+            }
+            // Cut off parsed contents out of buffer
+            nextStr = nextStr.slice(etxIndex + 8)
+            stxIndex = nextStr.indexOf(stx)
+            parsedAny = true
+          } else {
+            break
+          }
+        }
+        
+        if (parsedAny) {
+            accumulatedBitsRef.current = nextStr
+            setBits(accumulatedBitsRef.current.length > MAX_BIT_BUFFER 
+                ? accumulatedBitsRef.current.slice(-MAX_BIT_BUFFER) 
+                : accumulatedBitsRef.current)
+        }
+      }
+      
+      lastTransitionTimeRef.current = now
+    }
+    
+    lastStateRef.current = newState
 
     ctx.strokeStyle = '#00ff80'
     ctx.lineWidth = 1
@@ -220,53 +299,17 @@ function App() {
   }
 
   const startSampler = () => {
-    clearInterval(sampleTimerRef.current ?? 0)
-    sampleTimerRef.current = setInterval(() => {
-      if (!isRunningRef.current || recalibratingRef.current) {
-        return
-      }
-      const nextBit = brightnessRef.current >= thresholdRef.current ? '1' : '0'
-      setBits((prev) => {
-        let next = `${prev}${nextBit}`
-        
-        const stx = '00000010'
-        const etx = '00000011'
-        let stxIndex = next.indexOf(stx)
-        while (stxIndex !== -1) {
-          let etxIndex = next.indexOf(etx, stxIndex + 8)
-          if (etxIndex !== -1) {
-            const payload = next.slice(stxIndex + 8, etxIndex)
-            let asciiStr = ''
-            for (let i = 0; i < payload.length; i += 8) {
-              const byteStr = payload.slice(i, i + 8)
-              if (byteStr.length === 8) {
-                asciiStr += String.fromCharCode(parseInt(byteStr, 2))
-              }
-            }
-            if (asciiStr) {
-              setMessages(m => [...m, asciiStr])
-            }
-            next = next.slice(etxIndex + 8)
-            stxIndex = next.indexOf(stx)
-          } else {
-            break
-          }
-        }
-        
-        return next.length > MAX_BIT_BUFFER ? next.slice(-MAX_BIT_BUFFER) : next
-      })
-    }, sampleMs)
+    // Replaced by edge-decoder inside processFrame
   }
 
   useEffect(() => {
-    if (isRunning) {
-      startSampler()
-    }
-    return () => clearInterval(sampleTimerRef.current ?? 0)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // sampleMs logic handled in processFrame seamlessly
   }, [sampleMs, isRunning])
 
-  const clearBits = () => setBits('')
+  const clearBits = () => {
+    setBits('')
+    accumulatedBitsRef.current = ''
+  }
   
   const startRecalibration = () => {
     setIsRecalibrating(true)
