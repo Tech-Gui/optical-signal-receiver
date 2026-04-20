@@ -230,16 +230,16 @@ function App() {
             
         // Look for UART-framed STX and ETX to Decode directly
         let nextStr = accumulatedBitsRef.current
-        const stxFrame = '1000000100' // UART framed 0x02
-        const etxFrame = '1000000110' // UART framed 0x03
+        const stxFrame = '100000010' // UART framed 0x02 (ignoring stop bit for jitter safety)
+        const etxFrame = '100000011' // UART framed 0x03 (ignoring stop bit for jitter safety)
         let stxIndex = nextStr.indexOf(stxFrame)
         let parsedAny = false
         
         while (stxIndex !== -1) {
-          let etxIndex = nextStr.indexOf(etxFrame, stxIndex + 10)
+          let etxIndex = nextStr.indexOf(etxFrame, stxIndex + 9)
           if (etxIndex !== -1) {
             let asciiStr = ''
-            let i = stxIndex + 10
+            let i = stxIndex + 9
             
             while(i <= etxIndex - 10) {
               // Re-align clock precisely to next Start bit
@@ -256,7 +256,7 @@ function App() {
               setMessages(m => [...m, asciiStr])
             }
             // Cut off parsed contents out of buffer
-            nextStr = nextStr.slice(etxIndex + 10)
+            nextStr = nextStr.slice(etxIndex + 9)
             stxIndex = nextStr.indexOf(stxFrame)
             parsedAny = true
           } else {
