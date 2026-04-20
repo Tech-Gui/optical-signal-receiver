@@ -221,70 +221,69 @@ function App() {
             ? accumulatedBitsRef.current.slice(-MAX_BIT_BUFFER) 
             : accumulatedBitsRef.current)
             
-        // Look for UART-framed STX and ETX to Decode directly
-        let nextStr = accumulatedBitsRef.current
-        const stxFrame = '100000010' // UART framed 0x02 (ignoring stop bit for jitter safety)
-        let stxIndex = nextStr.indexOf(stxFrame)
-        let parsedAny = false
-        
-        while (stxIndex !== -1) {
-          let asciiStr = ''
-          let i = stxIndex + 9
-          let foundEtx = false
-          let lastGoodIndex = i
-          
-          while(i <= nextStr.length - 10) {
-            // Re-align clock precisely to next Start bit
-            if (nextStr[i] !== '1') {
-              i++;
-              continue;
-            }
-            const charBits = nextStr.slice(i + 1, i + 9)
-            const charCode = parseInt(charBits, 2)
-            
-            if (charCode === 3) { // 0x03 is ETX
-              foundEtx = true
-              i += 10
-              break;
-            }
-            
-            // Accept printable ASCII
-            if (charCode >= 32 && charCode <= 126) {
-              asciiStr += String.fromCharCode(charCode)
-              lastGoodIndex = i + 10
-            }
-            i += 10 // Advance past UART block (1 start + 8 data + 1 stop)
-          }
-          
-          const idleTime = performance.now() - lastTransitionTimeRef.current
-          const maxIdleTime = sampleMs * 12 // Scale timeout relative to speed (12 bits)
-          // Finalize message if ETX found, OR if transmission died/aborted
-          if (foundEtx || (idleTime > maxIdleTime && asciiStr.length > 0)) {
-            if (asciiStr) {
-              setMessages(m => [...m, asciiStr])
-            }
-            // Cut off parsed contents out of buffer gracefully
-            nextStr = nextStr.slice(foundEtx ? i : nextStr.length)
-            stxIndex = nextStr.indexOf(stxFrame)
-            parsedAny = true
-          } else {
-            // Give it more time to accumulate bits
-            break
-          }
-        }
-        
-        if (parsedAny) {
-            accumulatedBitsRef.current = nextStr
-            setBits(accumulatedBitsRef.current.length > MAX_BIT_BUFFER 
-                ? accumulatedBitsRef.current.slice(-MAX_BIT_BUFFER) 
-                : accumulatedBitsRef.current)
-        }
-      }
+
       
       lastTransitionTimeRef.current = now
     }
     
     lastStateRef.current = newState
+
+    // Continuously look for UART-framed STX and ETX to Decode directly
+    let nextStr = accumulatedBitsRef.current
+    const stxFrame = '100000010' // UART framed 0x02
+    let stxIndex = nextStr.indexOf(stxFrame)
+    let parsedAny = false
+    
+    while (stxIndex !== -1) {
+      let asciiStr = ''
+      let i = stxIndex + 9
+      let foundEtx = false
+      
+      while(i <= nextStr.length - 10) {
+        // Re-align clock precisely to next Start bit
+        if (nextStr[i] !== '1') {
+          i++;
+          continue;
+        }
+        const charBits = nextStr.slice(i + 1, i + 9)
+        const charCode = parseInt(charBits, 2)
+        
+        if (charCode === 3) { // 0x03 is ETX
+          foundEtx = true
+          i += 10
+          break;
+        }
+        
+        // Accept printable ASCII
+        if (charCode >= 32 && charCode <= 126) {
+          asciiStr += String.fromCharCode(charCode)
+        }
+        i += 10 // Advance past UART block
+      }
+      
+      const idleTime = performance.now() - lastTransitionTimeRef.current
+      const maxIdleTime = sampleMs * 12 // Scale timeout
+      // Finalize message if ETX found, OR if transmission died/aborted
+      if (foundEtx || (idleTime > maxIdleTime && asciiStr.length > 0)) {
+        if (asciiStr) {
+          setMessages(m => [...m, asciiStr])
+        }
+        // Cut off parsed contents out of buffer gracefully
+        nextStr = nextStr.slice(foundEtx ? i : nextStr.length)
+        stxIndex = nextStr.indexOf(stxFrame)
+        parsedAny = true
+      } else {
+        // Give it more time to accumulate bits
+        break
+      }
+    }
+    
+    if (parsedAny) {
+        accumulatedBitsRef.current = nextStr
+        setBits(accumulatedBitsRef.current.length > MAX_BIT_BUFFER 
+            ? accumulatedBitsRef.current.slice(-MAX_BIT_BUFFER) 
+            : accumulatedBitsRef.current)
+    }
 
     ctx.strokeStyle = '#00ff80'
     ctx.lineWidth = 1
