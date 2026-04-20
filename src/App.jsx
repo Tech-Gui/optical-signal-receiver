@@ -15,6 +15,7 @@ function App() {
   const lastStateRef = useRef(null)
   const lastTransitionTimeRef = useRef(0)
   const accumulatedBitsRef = useRef('')
+  const lastUiRefreshTimeRef = useRef(0)
 
   const [isRunning, setIsRunning] = useState(false)
   const [error, setError] = useState('')
@@ -190,7 +191,6 @@ function App() {
 
     const avg = pixels ? total / pixels : 0
     const currentBrightness = Number(avg.toFixed(1))
-    setBrightness(currentBrightness)
 
     // --- Edge-based Run-Length Decoder ---
     // Instead of randomly sampling with setInterval, we record the exact 
@@ -216,12 +216,7 @@ function App() {
         if (accumulatedBitsRef.current.length > MAX_BIT_BUFFER * 2) {
            accumulatedBitsRef.current = accumulatedBitsRef.current.slice(-MAX_BIT_BUFFER * 2)
         }
-        
-        setBits(accumulatedBitsRef.current.length > MAX_BIT_BUFFER 
-            ? accumulatedBitsRef.current.slice(-MAX_BIT_BUFFER) 
-            : accumulatedBitsRef.current)
-            
-
+      }
       
       lastTransitionTimeRef.current = now
     }
@@ -280,9 +275,14 @@ function App() {
     
     if (parsedAny) {
         accumulatedBitsRef.current = nextStr
-        setBits(accumulatedBitsRef.current.length > MAX_BIT_BUFFER 
-            ? accumulatedBitsRef.current.slice(-MAX_BIT_BUFFER) 
-            : accumulatedBitsRef.current)
+    }
+
+    if (now - lastUiRefreshTimeRef.current > 100) {
+      setBrightness(currentBrightness)
+      setBits(accumulatedBitsRef.current.length > MAX_BIT_BUFFER 
+          ? accumulatedBitsRef.current.slice(-MAX_BIT_BUFFER) 
+          : accumulatedBitsRef.current)
+      lastUiRefreshTimeRef.current = now
     }
 
     ctx.strokeStyle = '#00ff80'
