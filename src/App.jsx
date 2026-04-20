@@ -19,15 +19,20 @@ function App() {
   const [threshold, setThreshold] = useState(thresholdRef.current)
   const [sampleMs, setSampleMs] = useState(100)
   const [cameraInfo, setCameraInfo] = useState(null)
+  const [messages, setMessages] = useState([])
+  const [cameraOverride, setCameraOverride] = useState('auto')
+  const [isRecalibrating, setIsRecalibrating] = useState(false)
+  
+  const recalibratingRef = useRef(false)
+  const recalStatsRef = useRef({ min: 255, max: 0 })
 
   const facingPreference = useMemo(() => {
-    if (typeof navigator === 'undefined') {
-      return 'user'
-    }
+    if (cameraOverride !== 'auto') return cameraOverride
+    if (typeof navigator === 'undefined') return 'user'
     const ua = navigator.userAgent.toLowerCase()
     const isMobile = /iphone|ipad|ipod|android/.test(ua)
     return isMobile ? 'environment' : 'user'
-  }, [])
+  }, [cameraOverride])
 
   useEffect(() => {
     brightnessRef.current = brightness
@@ -182,6 +187,11 @@ function App() {
     const avg = pixels ? total / pixels : 0
     setBrightness(Number(avg.toFixed(1)))
 
+    if (recalibratingRef.current) {
+      if (avg < recalStatsRef.current.min) recalStatsRef.current.min = avg
+      if (avg > recalStatsRef.current.max) recalStatsRef.current.max = avg
+    }
+
     ctx.strokeStyle = '#00ff80'
     ctx.lineWidth = 1
     ctx.strokeRect(startX, startY, roiSize, roiSize)
@@ -212,12 +222,37 @@ function App() {
   const startSampler = () => {
     clearInterval(sampleTimerRef.current ?? 0)
     sampleTimerRef.current = setInterval(() => {
-      if (!isRunningRef.current) {
+      if (!isRunningRef.current || recalibratingRef.current) {
         return
       }
       const nextBit = brightnessRef.current >= thresholdRef.current ? '1' : '0'
       setBits((prev) => {
-        const next = `${prev}${nextBit}`
+        let next = `${prev}${nextBit}`
+        
+        const stx = '00000010'
+        const etx = '00000011'
+        let stxIndex = next.indexOf(stx)
+        while (stxIndex !== -1) {
+          let etxIndex = next.indexOf(etx, stxIndex + 8)
+          if (etxIndex !== -1) {
+            const payload = next.slice(stxIndex + 8, etxIndex)
+            let asciiStr = ''
+            for (let i = 0; i < payload.length; i += 8) {
+              const byteStr = payload.slice(i, i + 8)
+              if (byteStr.length === 8) {
+                asciiStr += String.fromCharCode(parseInt(byteStr, 2))
+              }
+            }
+            if (asciiStr) {
+              setMessages(m => [...m, asciiStr])
+            }
+            next = next.slice(etxIndex + 8)
+            stxIndex = next.indexOf(stx)
+          } else {
+            break
+          }
+        }
+        
         return next.length > MAX_BIT_BUFFER ? next.slice(-MAX_BIT_BUFFER) : next
       })
     }, sampleMs)
@@ -232,6 +267,23 @@ function App() {
   }, [sampleMs, isRunning])
 
   const clearBits = () => setBits('')
+  
+  const startRecalibration = () => {
+    setIsRecalibrating(true)
+    recalibratingRef.current = true
+    recalStatsRef.current = { min: 255, max: 0 }
+    
+    setTimeout(() => {
+      const { min, max } = recalStatsRef.current
+      const newThreshold = Math.round((min + max) / 2)
+      if (!isNaN(newThreshold) && isFinite(newThreshold)) {
+        setThreshold(newThreshold)
+      }
+      setIsRecalibrating(false)
+      recalibratingRef.current = false
+    }, 3000)
+  }
+
   const handleThresholdChange = (event) => {
     setThreshold(event.target.valueAsNumber ?? Number(event.target.value))
   }
@@ -257,6 +309,20 @@ function App() {
         <button onClick={isRunning ? stopCapture : startCapture}>
           {isRunning ? 'Stop capture' : 'Start capture'}
         </button>
+        <button onClick={startRecalibration} disabled={!isRunning || isRecalibrating}>
+          {isRecalibrating ? 'Recalibrating (3s)...' : 'Recalibrate'}
+        </button>
+        <label>
+          Camera:
+          <select value={cameraOverride} onChange={(e) => {
+            setCameraOverride(e.target.value)
+            if (isRunning) stopCapture()
+          }}>
+            <option value="auto">Auto</option>
+            <option value="user">Front</option>
+            <option value="environment">Back</option>
+          </select>
+        </label>
         <label>
           Threshold ({threshold})
           <input
@@ -325,6 +391,16 @@ function App() {
       </section>
 
       <section className="bits">
+        <h2>Decoded Messages</h2>
+        <div style={{ background: 'rgba(0,0,0,0.3)', padding: '12px', borderRadius: '8px', marginBottom: '8px', color: '#38bdf8', minHeight: '40px', wordWrap: 'break-word' }}>
+          {messages.length === 0 ? (
+            <span style={{color: '#94a3b8'}}>No messages received yet...</span>
+          ) : (
+            messages.map((m, i) => <div key={i}>[{new Date().toLocaleTimeString()}] {m}</div>)
+          )}
+        </div>
+        <button onClick={() => setMessages([])} disabled={!messages.length} style={{marginBottom: '20px'}}>Clear messages</button>
+
         <h2>Bit stream (latest {MAX_BIT_BUFFER})</h2>
         <code>{bits || '—'}</code>
       </section>
