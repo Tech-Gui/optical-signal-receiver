@@ -25,10 +25,8 @@ function App() {
   const [cameraInfo, setCameraInfo] = useState(null)
   const [messages, setMessages] = useState([])
   const [cameraOverride, setCameraOverride] = useState('auto')
-  const [isRecalibrating, setIsRecalibrating] = useState(false)
-  
-  const recalibratingRef = useRef(false)
-  const recalStatsRef = useRef({ min: 255, max: 0 })
+  const [calibStep, setCalibStep] = useState('idle')
+  const [calibOnVal, setCalibOnVal] = useState(0)
 
   const facingPreference = useMemo(() => {
     if (cameraOverride !== 'auto') return cameraOverride
@@ -194,11 +192,6 @@ function App() {
     const currentBrightness = Number(avg.toFixed(1))
     setBrightness(currentBrightness)
 
-    if (recalibratingRef.current) {
-      if (currentBrightness < recalStatsRef.current.min) recalStatsRef.current.min = currentBrightness
-      if (currentBrightness > recalStatsRef.current.max) recalStatsRef.current.max = currentBrightness
-    }
-
     // --- Edge-based Run-Length Decoder ---
     // Instead of randomly sampling with setInterval, we record the exact 
     // duration between transitions (LOW->HIGH or HIGH->LOW) to calculate the bits emitted.
@@ -333,19 +326,26 @@ function App() {
   }
   
   const startRecalibration = () => {
-    setIsRecalibrating(true)
-    recalibratingRef.current = true
-    recalStatsRef.current = { min: 255, max: 0 }
-    
-    setTimeout(() => {
-      const { min, max } = recalStatsRef.current
-      const newThreshold = Math.round((min + max) / 2)
-      if (!isNaN(newThreshold) && isFinite(newThreshold)) {
-        setThreshold(newThreshold)
-      }
-      setIsRecalibrating(false)
-      recalibratingRef.current = false
-    }, 3000)
+    setCalibStep('step1')
+  }
+
+  const handleCaptureOn = () => {
+    setCalibOnVal(brightnessRef.current)
+    setCalibStep('step2')
+  }
+
+  const handleCaptureOff = () => {
+    const offVal = brightnessRef.current
+    const newThreshold = Math.round((calibOnVal + offVal) / 2)
+    if (!isNaN(newThreshold) && isFinite(newThreshold)) {
+      setThreshold(newThreshold)
+      thresholdRef.current = newThreshold
+    }
+    setCalibStep('idle')
+  }
+
+  const cancelCalibration = () => {
+    setCalibStep('idle')
   }
 
   const handleThresholdChange = (event) => {
@@ -373,9 +373,27 @@ function App() {
         <button onClick={isRunning ? stopCapture : startCapture}>
           {isRunning ? 'Stop capture' : 'Start capture'}
         </button>
-        <button onClick={startRecalibration} disabled={!isRunning || isRecalibrating}>
-          {isRecalibrating ? 'Recalibrating (3s)...' : 'Recalibrate'}
-        </button>
+        {calibStep === 'idle' ? (
+          <button onClick={startRecalibration} disabled={!isRunning}>
+            Interactive Calibration
+          </button>
+        ) : calibStep === 'step1' ? (
+          <div style={{display:'flex', flexDirection:'column', gap:'5px', background:'#334155', padding:'10px', borderRadius:'8px', gridColumn: '1 / -1'}}>
+            <strong>Step 1: Shine the transmitter light (ON)</strong>
+            <div style={{display:'flex', gap:'10px'}}>
+              <button onClick={handleCaptureOn} style={{background:'#10b981', flex:1}}>Capture ON Brightness</button>
+              <button onClick={cancelCalibration} style={{background:'#64748b'}}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <div style={{display:'flex', flexDirection:'column', gap:'5px', background:'#334155', padding:'10px', borderRadius:'8px', gridColumn: '1 / -1'}}>
+            <strong>Step 2: Switch the transmitter light (OFF)</strong>
+            <div style={{display:'flex', gap:'10px'}}>
+              <button onClick={handleCaptureOff} style={{background:'#f59e0b', flex:1}}>Capture OFF Brightness</button>
+              <button onClick={cancelCalibration} style={{background:'#64748b'}}>Cancel</button>
+            </div>
+          </div>
+        )}
         <label>
           Camera:
           <select value={cameraOverride} onChange={(e) => {
