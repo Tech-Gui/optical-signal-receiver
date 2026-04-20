@@ -21,7 +21,7 @@ function App() {
   const [brightness, setBrightness] = useState(0)
   const [bits, setBits] = useState('')
   const [threshold, setThreshold] = useState(thresholdRef.current)
-  const [sampleMs, setSampleMs] = useState(100)
+  const [sampleMs, setSampleMs] = useState(200)
   const [cameraInfo, setCameraInfo] = useState(null)
   const [messages, setMessages] = useState([])
   const [cameraOverride, setCameraOverride] = useState('auto')
